@@ -1,0 +1,9 @@
+[package]
+name = "writer2"
+version = "0.1.0"
+authors = ["name <e@ma.il>"]
+
+[dependencies]
+nom = "4.0.0"
+pulldown-cmark = { version = "0.0.11", default-features = false }
+getopts = "0.2"
