@@ -8,14 +8,39 @@
  *  -   replace / don't replace existing files
  */
 
-extern crate pulldown_cmark;
-extern crate nom;
 extern crate getopts;
+extern crate libc;
+
+#[macro_use]
+extern crate bitflags;
+
+#[macro_use]
+extern crate newtype_derive;
+
+#[macro_use]
+extern crate custom_derive;
+
+#[allow(unused)]
+#[allow(non_upper_case_globals)]
+#[allow(non_camel_case_types)]
+#[allow(non_snake_case)]
+#[link(name="cmark", kind="static")]
+mod bind {
+    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+}
 
 use std::fs;
 use std::io::{BufReader, BufWriter, Read, Write};
 
-use pulldown_cmark::{Parser, html};
+mod cmark;
+use cmark::{ Parser, Iter };
+use cmark::Options as CmarkOptions;
+
+mod converter;
+use converter::Converter;
+
+mod asset;
+use asset::{ Asset, AssetType };
 
 use getopts::Options;
 use std::env;
@@ -28,53 +53,55 @@ struct ProgramInfo {
     verbose: bool,
 }
 
-//  asset
-struct Asset {
-    path: PathBuf,
-    asset_type: AssetType,
-}
-
-//  asset type
-enum AssetType {
-    Css,
-    Other,
-}
-
-//  sugar for building an asset
-fn make_asset(path: &str, ty: AssetType) -> Asset {
-    Asset {
-        path: PathBuf::from(path),
-        asset_type: ty,
-    }
-}
-
 //  display how to use this program
 fn print_usage(program: &str, opts: &Options) {
     let brief = format!("usage: {} INPUT-DIR [options]", program);
     print!("{}", opts.usage(&brief));
 }
 
-//  copy assets over to the output directory
-fn prepare_assets(info: &ProgramInfo, assets: &Vec<Asset>) {
-    let output_dir = &info.output_dir;
+fn copy_assets(
+    input_dir: &PathBuf,
+    src_dir: &PathBuf,
+    dst_dir: &PathBuf
+) -> Vec<Asset> {
+    fs::create_dir_all(dst_dir.clone());
 
-    for asset in assets {
-        let path = &asset.path;
+    let iter = fs::read_dir(src_dir).unwrap();
+    let mut res: Vec<Asset> = Vec::new();
 
-        let parent_dir = path.parent()
-            .expect(&format!("asset \"{}\" does not have a parent", path.display()));
-        let parent_dir = output_dir.join(parent_dir);
+    for entry in iter {
+        let mut path = entry.unwrap().path();
+        let new_dst_dir = dst_dir.join(path.strip_prefix(src_dir).unwrap());
 
-        fs::create_dir_all(parent_dir.clone())
-            .expect(&format!("could not create asset directory \"{}\"", parent_dir.display()));
+        match path.is_dir() {
+            true => {
+                let mut vec = copy_assets(input_dir, &path, &new_dst_dir);
+                res.append(&mut vec);
+            },
 
-        let asset_dir = path.file_name()
-            .expect(&format!("asset \"{}\" does not have a filename", path.display()));
-        let asset_dir = parent_dir.join(asset_dir);
-
-        fs::copy(path, asset_dir.clone())
-            .expect(&format!("could not copy asset \"{}\" to \"{}\"", path.display(), asset_dir.display()));
+            false => {
+                fs::copy(&path, &new_dst_dir);
+                res.push(Asset::new(
+                    path.strip_prefix(input_dir).unwrap().to_path_buf(),
+                    AssetType::guess(&path)
+                ));
+            },
+        }
     }
+
+    res
+}
+
+//  copy assets over to the output directory
+fn prepare_assets(
+    info: &ProgramInfo,
+    assets_dir: &PathBuf
+) -> Vec<Asset> {
+    let curr_dir = env::current_dir().unwrap();
+    let src_dir = curr_dir.join(assets_dir);
+    let dst_dir = info.output_dir.join(assets_dir);
+
+    copy_assets(&curr_dir, &src_dir, &dst_dir)
 }
 
 //  write assets into a file
@@ -82,33 +109,58 @@ fn write_assets<W>(writer: &mut BufWriter<W>, assets: &Vec<Asset>, dist: usize)
     where W: Write
 {
     for asset in assets {
-        match asset.asset_type {
-            AssetType::Css => {
+        match asset.asset_type() {
+            &AssetType::Css => {
                 writeln!(
                     writer,
                     "<link rel=\"stylesheet\" href=\"{}{}\" type=\"text/css\">",
                     "../".repeat(dist),
-                    asset.path.display()
-                ).expect(&format!("failed to write asset \"{}\" into file", asset.path.display()));
+                    asset.path().display()
+                ).expect(&format!("failed to write asset \"{}\" into file", asset.path().display()));
             },
 
-            AssetType::Other => {},
+            &AssetType::Js => {
+                writeln!(
+                    writer,
+                    "<script src=\"{}{}\" type=\"text/javascript\"></script>",
+                    "../".repeat(dist),
+                    asset.path().display()
+                ).unwrap();
+            },
+
+            &AssetType::Other => {},
         }
     }
 }
 
 //  convert a markdown into html
-fn convert<R, W>(reader: &mut BufReader<R>, writer: &mut BufWriter<W>, assets: &Vec<Asset>, dist: usize)
+fn convert<R, W>(
+    reader: &mut BufReader<R>,
+    writer: &mut BufWriter<W>,
+    assets: &Vec<Asset>,
+    dist: usize
+)
     where R: Read, W: Write
 {
     let mut read_buffer = String::new();
-
     reader.read_to_string(&mut read_buffer).unwrap();
-    let parser = Parser::new(&read_buffer.as_str());
 
-    let mut write_buffer = String::new();
+    let iter = Iter::from_parser({
+        let mut parser = Parser::new(CmarkOptions::DEFAULT);
+        parser.feed(read_buffer.as_str(), read_buffer.len()).expect(
+            "feeding failed"
+        );
+        parser
+    });
+    
+    /*  this always works
+    let write_buffer = cmark::markdown_to_html(
+        read_buffer.as_str(),
+        read_buffer.len(),
+        CmarkOptions::DEFAULT
+    ).expect("markdown-to-html conversion failed");
+    */
 
-    html::push_html(&mut write_buffer, parser);
     writer.write(b"<!DOCTYPE html>\n\
 <html>\n\
 <head>\n\
@@ -118,9 +170,15 @@ fn convert<R, W>(reader: &mut BufReader<R>, writer: &mut BufWriter<W>, assets: &
         write_assets(writer, assets, dist);
     }
     writer.write(b"</head>\n\
-<body>\n").unwrap();
-    writer.write(write_buffer.as_bytes()).unwrap();
-    writer.write(b"</body>\n\
+<body>\n\
+<div class=\"container u-full-width\">\n").unwrap();
+
+    let mut converter = Converter::new();
+    converter.convert(iter, writer);
+
+    writer.write(b"</div>\n\
+</body>\n\
+<script>hljs.initHighlightingOnLoad();</script>\n\
 </html>").unwrap();
 }
 
@@ -139,7 +197,7 @@ fn parse_options() -> Result<ProgramInfo, ()> {
         print_usage(program, &opts);
     }
 
-    let mut input_dir = match matches.free.is_empty() {
+    let input_dir = match matches.free.is_empty() {
         true => {
             print_usage(program, &opts);
             return Err(());
@@ -148,18 +206,10 @@ fn parse_options() -> Result<ProgramInfo, ()> {
         false => PathBuf::from(matches.free[0].clone()),
     };
 
-    let mut output_dir = match matches.opt_str("o") {
+    let output_dir = match matches.opt_str("o") {
         Some(s) => PathBuf::from(s),
         None => input_dir.clone(),
     };
-
-    let pwd = env::current_dir().unwrap();
-    if input_dir.is_relative() {
-        input_dir = pwd.join(input_dir);
-    }
-    if output_dir.is_relative() {
-        output_dir = pwd.join(output_dir);
-    }
 
     Ok(ProgramInfo {
         input_dir: input_dir,
@@ -239,12 +289,6 @@ fn main() {
         println!("the current working directory is \"{}\"", env::current_dir().unwrap().display());
     }
 
-    //  assets
-    let assets: Vec<Asset> = vec![
-        make_asset("assets/normalize.css", AssetType::Css),
-        make_asset("assets/skeleton.css", AssetType::Css),
-    ];
-
-    prepare_assets(&info, &assets);
+    let assets = prepare_assets(&info, &PathBuf::from("assets"));
     convert_dir(&info.input_dir, &info.output_dir, info.verbose, &assets, 0);
 }
