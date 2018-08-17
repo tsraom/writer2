@@ -1,6 +1,9 @@
 use cmark::*;
+
 use std::io;
 use std::io::{ BufWriter, Write };
+
+use std::iter;
 
 pub struct Converter {
     indent: usize,
@@ -364,15 +367,13 @@ impl Converter {
     ) -> io::Result<()>
         where W: Write
     {
-        match (event, title.is_empty()) {
-            (&Event::Enter, true) =>
-                write!(writer, "<a href=\"{}\">", url),
+        match event {
+            &Event::Enter => match title.is_empty() {
+                true => write!(writer, "<a href=\"{}\">", url),
+                false => write!(writer, "<a href=\"{}\" title=\"{}\">", url, title),
+            },
 
-            (&Event::Enter, false) =>
-                write!(writer, "<a href=\"{}\" title=\"{}\">", url, title),
-
-            (&Event::Exit, _) =>
-                write!(writer, "</a>"),
+            &Event::Exit => write!(writer, "</a>"),
         }?;
 
         Ok(())
@@ -387,15 +388,13 @@ impl Converter {
     ) -> io::Result<()>
         where W: Write
     {
-        match (event, title.is_empty()) {
-            (&Event::Enter, true) =>
-                write!(writer, "<img src=\"{}\" alt=\"", url),
+        match event {
+            &Event::Enter => match title.is_empty() {
+                true => write!(writer, "<img src=\"{}\" alt=\"", url),
+                false => write!(writer, "<img src=\"{}\" title=\"{}\" alt=\"", url, title),
+            },
 
-            (&Event::Enter, false) =>
-                write!(writer, "<img src=\"{}\" title=\"{}\" alt=\"", url, title),
-
-            (&Event::Exit, _) =>
-                write!(writer, "\" />"),
+            &Event::Exit => write!(writer, "\" />"),
         }?;
 
         Ok(())
