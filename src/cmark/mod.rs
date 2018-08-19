@@ -31,8 +31,11 @@ use std::str;
  */
 
 /// Takes a C string (of C type const char*) and returns a byte-by-byte clone
-/// as a Rust String if successful. Also calls C free() on the pointer.
-fn raw_to_string(raw: *const raw::c_char) -> Result<String, str::Utf8Error> {
+/// as a Rust String if successful. If `free`, calls C free() on the pointer.
+fn raw_to_string(
+    raw: *const raw::c_char,
+    free: bool
+) -> Result<String, str::Utf8Error> {
     let ret;
     match unsafe { ffi::CStr::from_ptr(raw).to_str() } {
         Ok(res) => {
@@ -44,7 +47,10 @@ fn raw_to_string(raw: *const raw::c_char) -> Result<String, str::Utf8Error> {
         },
     }
 
-    unsafe { bind::free(raw as *mut raw::c_void); }
+    if free {
+        unsafe { bind::free(raw as *mut raw::c_void); }
+    }
+
     ret
 }
 
@@ -77,7 +83,7 @@ pub fn markdown_to_html(
         )
     };
 
-    match raw_to_string(res) {
+    match raw_to_string(res, true) {
         Ok(x) => Ok(x),
         Err(e) => Err(MarkdownToHtmlErr::Utf8(e)),
     }
@@ -303,18 +309,18 @@ impl Iterator for Iter {
                 Node::Block(Block::CodeBlock(
                     InfoString::from(raw_to_string(unsafe {
                         bind::cmark_node_get_fence_info(raw_node)
-                    }).expect("bad info string")),
+                    }, false).expect("bad info string")),
 
                     Literal::from(raw_to_string(unsafe {
                         bind::cmark_node_get_literal(raw_node)
-                    }).expect("bad literal")),
+                    }, false).expect("bad literal")),
                 )),
 
             bind::cmark_node_type::CMARK_NODE_HTML_BLOCK =>
                 Node::Block(Block::HtmlBlock(
                     Literal::from(raw_to_string(unsafe {
                         bind::cmark_node_get_literal(raw_node)
-                    }).expect("bad literal"))
+                    }, false).expect("bad literal"))
                 )),
 
             bind::cmark_node_type::CMARK_NODE_CUSTOM_BLOCK =>
@@ -342,7 +348,7 @@ impl Iterator for Iter {
                 Node::Inline(Inline::Text(
                     Literal::from(raw_to_string(unsafe {
                         bind::cmark_node_get_literal(raw_node)
-                    }).expect("bad literal"))
+                    }, false).expect("bad literal"))
                 )),
 
             bind::cmark_node_type::CMARK_NODE_SOFTBREAK =>
@@ -354,14 +360,14 @@ impl Iterator for Iter {
                 Node::Inline(Inline::Code(
                     Literal::from(raw_to_string(unsafe {
                         bind::cmark_node_get_literal(raw_node)
-                    }).expect("bad literal"))
+                    }, false).expect("bad literal"))
                 )),
 
             bind::cmark_node_type::CMARK_NODE_HTML_INLINE =>
                 Node::Inline(Inline::HtmlInline(
                     Literal::from(raw_to_string(unsafe {
                         bind::cmark_node_get_literal(raw_node)
-                    }).expect("bad literal"))
+                    }, false).expect("bad literal"))
                 )),
 
             bind::cmark_node_type::CMARK_NODE_CUSTOM_INLINE =>
@@ -375,22 +381,22 @@ impl Iterator for Iter {
                 Node::Inline(Inline::Link(
                     Url::from(raw_to_string(unsafe {
                         bind::cmark_node_get_url(raw_node)
-                    }).expect("bad url")),
+                    }, false).expect("bad url")),
 
                     Title::from(raw_to_string(unsafe {
                         bind::cmark_node_get_title(raw_node)
-                    }).expect("bad title"))
+                    }, false).expect("bad title"))
                 )),
 
             bind::cmark_node_type::CMARK_NODE_IMAGE =>
                 Node::Inline(Inline::Image(
                     Url::from(raw_to_string(unsafe {
                         bind::cmark_node_get_url(raw_node)
-                    }).expect("bad url")),
+                    }, false).expect("bad url")),
 
                     Title::from(raw_to_string(unsafe {
                         bind::cmark_node_get_title(raw_node)
-                    }).expect("bad title"))
+                    }, false).expect("bad title"))
                 )),
         };
 
@@ -488,7 +494,7 @@ fn render_html(
         )
     };
 
-    match raw_to_string(res) {
+    match raw_to_string(res, true) {
         Ok(x) => Ok(x),
         Err(e) => Err(RenderErr::Utf8(e)),
     }

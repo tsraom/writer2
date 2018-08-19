@@ -112,7 +112,8 @@ impl Converter {
         Ok(())
     }
 
-    fn indent(&self) -> String {
+    fn make_indent(&self) -> String {
+        //  println!("indent is {}", self.indent);
         iter::repeat("    ").take(self.indent).collect::<String>()
     }
 
@@ -125,13 +126,13 @@ impl Converter {
     {
         match event {
             &Event::Enter => {
-                write!(writer, "{}<blockquote>\n", self.indent())?;
+                write!(writer, "{}<blockquote>\n", self.make_indent())?;
                 self.indent += 1;
             },
 
             &Event::Exit => {
                 self.indent -= 1;
-                write!(writer, "{}</blockquote>\n", self.indent())?;
+                write!(writer, "{}</blockquote>\n", self.make_indent())?;
             },
         };
 
@@ -152,38 +153,54 @@ impl Converter {
         self.tightness = (*tightness).into();
 
         match event {
-            &Event::Enter => match ty {
-                &ListType::Bullet => write!(writer, "<ul>"),
-                &ListType::Ordered => write!(writer, "<ol>"),
+            &Event::Enter => {
+                match ty {
+                    &ListType::Bullet => write!(writer, "{}<ul>\n", self.make_indent()),
+                    &ListType::Ordered => write!(writer, "{}<ol>\n", self.make_indent()),
+                }?;
+
+                self.indent += 1;
             },
 
-            &Event::Exit => match ty {
-                &ListType::Bullet => write!(writer, "</ul>"),
-                &ListType::Ordered => write!(writer, "</ol>"),
+            &Event::Exit => {
+                self.indent -= 1;
+
+                match ty {
+                    &ListType::Bullet => write!(writer, "{}</ul>\n", self.make_indent()),
+                    &ListType::Ordered => write!(writer, "{}</ol>\n", self.make_indent()),
+                }?;
             },
-        }?;
+        };
 
         Ok(())
     }
 
     fn convert_item<W>(
-        &self,
+        &mut self,
         event: &Event,
         writer: &mut BufWriter<W>
     ) -> io::Result<()>
         where W: Write
     {
         match event {
-            &Event::Enter => match self.tightness {
-                true => write!(writer, "<li>"),
-                false => write!(writer, "<li><p>"),
+            &Event::Enter => {
+                match self.tightness {
+                    true => write!(writer, "{}<li>\n", self.make_indent()),
+                    false => write!(writer, "{}<li><p>\n", self.make_indent()),
+                }?;
+
+                self.indent += 1;
             },
 
-            &Event::Exit => match self.tightness {
-                true => write!(writer, "</li>"),
-                false => write!(writer, "</p></li>"),
+            &Event::Exit => {
+                self.indent -= 1;
+                
+                match self.tightness {
+                    true => write!(writer, "{}</li>\n", self.make_indent()),
+                    false => write!(writer, "{}</p></li>\n", self.make_indent()),
+                }?;
             },
-        }?;
+        };
 
         Ok(())
     }
@@ -197,11 +214,16 @@ impl Converter {
         where W: Write
     {
         match info.is_empty() {
-            true => write!(writer, "<pre><code>{}</code></pre>", lit),
+            true => write!(
+                writer,
+                "{}<pre><code>\n{}\n</code></pre>\n",
+                self.make_indent(), lit
+            ),
+
             false => write!(
                 writer,
-                "<pre><code class=\"{}\">{}</code></pre>",
-                info, lit
+                "{}<pre><code class=\"{}\">\n{}\n</code></pre>\n",
+                self.make_indent(), info, lit
             ),
         }?;
 
@@ -215,27 +237,34 @@ impl Converter {
     ) -> io::Result<()>
         where W: Write
     {
-        write!(writer, "{}", lit)?;
+        write!(writer, "{}{}\n", self.make_indent(), lit)?;
         Ok(())
     }
 
     fn convert_paragraph<W>(
-        &self,
+        &mut self,
         event: &Event,
         writer: &mut BufWriter<W>
     ) -> io::Result<()>
         where W: Write
     {
         match event {
-            &Event::Enter => write!(writer, "<p>"),
-            &Event::Exit => write!(writer, "</p>"),
-        }?;
+            &Event::Enter => {
+                write!(writer, "{}<p>", self.make_indent())?;
+                self.indent += 1;
+            },
+
+            &Event::Exit => {
+                self.indent -= 1;
+                write!(writer, "</p>\n")?;
+            },
+        };
 
         Ok(())
     }
 
     fn convert_heading<W>(
-        &self,
+        &mut self,
         lvl: &HeadingLevel,
         event: &Event,
         writer: &mut BufWriter<W>
@@ -243,24 +272,32 @@ impl Converter {
         where W: Write
     {
         match event {
-            &Event::Enter => match lvl {
-                &HeadingLevel::One => write!(writer, "<h1>"),
-                &HeadingLevel::Two => write!(writer, "<h2>"),
-                &HeadingLevel::Three => write!(writer, "<h3>"),
-                &HeadingLevel::Four => write!(writer, "<h4>"),
-                &HeadingLevel::Five => write!(writer, "<h5>"),
-                &HeadingLevel::Six => write!(writer, "<h6>"),
+            &Event::Enter => {
+                match lvl {
+                    &HeadingLevel::One => write!(writer, "{}<h1>", self.make_indent()),
+                    &HeadingLevel::Two => write!(writer, "{}<h2>", self.make_indent()),
+                    &HeadingLevel::Three => write!(writer, "{}<h3>", self.make_indent()),
+                    &HeadingLevel::Four => write!(writer, "{}<h4>", self.make_indent()),
+                    &HeadingLevel::Five => write!(writer, "{}<h5>", self.make_indent()),
+                    &HeadingLevel::Six => write!(writer, "{}<h6>", self.make_indent()),
+                }?;
+
+                self.indent += 1;
             },
 
-            &Event::Exit => match lvl {
-                &HeadingLevel::One => write!(writer, "</h1>"),
-                &HeadingLevel::Two => write!(writer, "</h2>"),
-                &HeadingLevel::Three => write!(writer, "</h3>"),
-                &HeadingLevel::Four => write!(writer, "</h4>"),
-                &HeadingLevel::Five => write!(writer, "</h5>"),
-                &HeadingLevel::Six => write!(writer, "</h6>"),
+            &Event::Exit => {
+                self.indent -= 1;
+                
+                match lvl {
+                    &HeadingLevel::One => write!(writer, "</h1>\n"),
+                    &HeadingLevel::Two => write!(writer, "</h2>\n"),
+                    &HeadingLevel::Three => write!(writer, "</h3>\n"),
+                    &HeadingLevel::Four => write!(writer, "</h4>\n"),
+                    &HeadingLevel::Five => write!(writer, "</h5>\n"),
+                    &HeadingLevel::Six => write!(writer, "</h6>\n"),
+                }?;
             },
-        }?;
+        };
 
         Ok(())
     }
@@ -271,7 +308,7 @@ impl Converter {
     ) -> io::Result<()>
         where W: Write
     {
-        write!(writer, "<hr />")?;
+        write!(writer, "{}<hr />\n", self.make_indent())?;
         Ok(())
     }
 
@@ -302,7 +339,7 @@ impl Converter {
     ) -> io::Result<()>
         where W: Write
     {
-        write!(writer, "<br />")?;
+        write!(writer, "<br />\n")?;
         Ok(())
     }
 
