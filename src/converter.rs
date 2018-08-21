@@ -1,7 +1,8 @@
 use cmark::*;
+use asset::*;
 
 use std::io;
-use std::io::{ BufWriter, Write };
+use std::io::{ BufReader, BufWriter, Read, Write };
 
 use std::iter;
 
@@ -26,16 +27,29 @@ impl Converter {
         }
     }
 
-    pub fn convert<W>(
+    pub fn convert<R, W>(
         &mut self,
-        iter: Iter,
-        writer: &mut BufWriter<W>
+        reader: &mut BufReader<R>,
+        writer: &mut BufWriter<W>,
+        assets: &Vec<Asset>,
+        dist: usize
     ) -> io::Result<()>
-        where W: Write
+        where R: Read, W: Write
     {
-        for (node, event) in iter {
-            println!("{:?}, {:?}", node, event);
+        let mut read_buffer = String::new();
+        reader.read_to_string(&mut read_buffer).unwrap();
 
+        let iter = Iter::from_parser({
+            let mut parser = Parser::new(Options::DEFAULT);
+            parser.feed(read_buffer.as_str(), read_buffer.len()).expect(
+                "feeding failed"
+            );
+            parser
+        });
+
+        self.write_header(writer, assets, dist)?;
+
+        for (node, event) in iter {
             match node {
                 Node::Block(Block::Document) => Ok(()),
 
@@ -106,15 +120,95 @@ impl Converter {
 
                 Node::Inline(Inline::Image(url, title)) =>
                     self.convert_image(&url, &title, &event, writer),
-            }?
+            }?;
+        }
+
+        self.write_footer(writer)?;
+
+        Ok(())
+    }
+
+    fn write_header<W>(
+        &mut self,
+        writer: &mut BufWriter<W>,
+        assets: &Vec<Asset>,
+        dist: usize
+    ) -> io::Result<()>
+        where W: Write
+    {
+        write!(writer, "<!DOCTYPE html>\n\
+<html>\n\
+{0}<head>\n\
+{0}{0}<meta charset=\"UTF-8\">\n\
+{0}{0}<title>Title</title>\n", Self::repeat_indent(1))?;
+
+        self.write_assets(writer, assets, dist)?;
+
+        write!(writer, "{0}</head>\n\
+\n\
+{0}<body>\n\
+{0}{0}<div class=\"container u-full-width\">\n", Self::repeat_indent(1))?;
+
+        self.indent = 2;
+
+        Ok(())
+    }
+
+    fn write_assets<W>(
+        &mut self,
+        writer: &mut BufWriter<W>,
+        assets: &Vec<Asset>,
+        dist: usize
+    ) -> io::Result<()>
+        where W: Write
+    {
+        for asset in assets {
+            match asset.asset_type() {
+                &AssetType::Css => {
+                    write!(
+                        writer,
+                        "<link rel=\"stylesheet\" href=\"{}{}\" type=\"text/css\">\n",
+                        "../".repeat(dist),
+                        asset.path().display()
+                    )
+                },
+
+                &AssetType::Js => {
+                    write!(
+                        writer,
+                        "<script src=\"{}{}\" type=\"text/javascript\"></script>\n",
+                        "../".repeat(dist),
+                        asset.path().display()
+                    )
+                },
+
+                &AssetType::Other => Ok(()),
+            }?;
         }
 
         Ok(())
     }
 
+    fn write_footer<W>(
+        &mut self,
+        writer: &mut BufWriter<W>,
+    ) -> io::Result<()>
+        where W: Write
+    {
+        write!(writer, "{0}{0}</div>\n\
+{0}</body>\n\
+{0}<script>hljs.initHighlightingOnLoad();</script>\n\
+</html>", Self::repeat_indent(1))?;
+
+        Ok(())
+    }
+
+    fn repeat_indent(n: usize) -> String {
+        iter::repeat("    ").take(n).collect::<String>()
+    }
+
     fn make_indent(&self) -> String {
-        //  println!("indent is {}", self.indent);
-        iter::repeat("    ").take(self.indent).collect::<String>()
+        Self::repeat_indent(self.indent)
     }
 
     fn convert_blockquote<W>(
