@@ -59,28 +59,25 @@ fn copy_assets(
     src_dir: &PathBuf,
     dst_dir: &PathBuf
 ) -> Result<Vec<Asset>, ()> {
-    let src_dir_display = src_dir.display();
-    let dst_dir_display = dst_dir.display();
-
-    match fs::create_dir_all(dst_dir.clone()) {
+    match fs::create_dir_all(&dst_dir) {
         Ok(_) => {
-            info!("Creating directory {}...", dst_dir_display);
+            info!("Creating directory {}...", dst_dir.display());
         },
 
         Err(_) => {
-            error!("Cannot create directory {}. Skipping this directory...", dst_dir_display);
+            error!("Cannot create directory {}. Skipping this directory...", dst_dir.display());
             return Err(());
         },
     };
 
-    let iter = match fs::read_dir(src_dir) {
+    let iter = match fs::read_dir(&src_dir) {
         Ok(res) => {
-            info!("Iterating over files in directory {}...", src_dir_display);
+            info!("Iterating over files in directory {}...", src_dir.display());
             res
         },
 
         Err(_) => {
-            error!("Cannot iterate over files in directory {}. Skipping this directory...", src_dir_display);
+            error!("Cannot iterate over files in directory {}. Skipping this directory...", src_dir.display());
             return Err(());
         },
     };
@@ -95,29 +92,27 @@ fn copy_assets(
                 continue;
             },
         }.path();
-        let path_display = path.display();
 
-        let new_dst_dir = dst_dir.join(match path.strip_prefix(src_dir) {
+        let new_dst_path = dst_dir.join(match path.strip_prefix(&src_dir) {
             Ok(res) => res,
             Err(_) => {
-                error!("Cannot strip prefix {} from {}. Skipping this file...", src_dir_display, path_display);
+                error!("Cannot strip prefix {} from {}. Skipping this file...", src_dir.display(), path.display());
                 continue;
             },
         });
-        let new_dst_dir_display = new_dst_dir.display();
 
         match path.is_dir() {
             true => {
-                info!("{} is a directory, going in...", path_display);
+                info!("{} is a directory, going in...", path.display());
                 
-                match copy_assets(info, input_dir, &path, &new_dst_dir) {
+                match copy_assets(info, input_dir, &path, &new_dst_path) {
                     Ok(mut vec) => {
                         res.append(&mut vec);
                     },
 
                     Err(_) => {
                         if !info.persist {
-                            error!("Failed to copy assets in inner directory {}. Falling back...", path_display);
+                            error!("Failed to copy assets in inner directory {}. Falling back...", path.display());
                             return Err(());
                         }
                     },
@@ -125,23 +120,23 @@ fn copy_assets(
             },
 
             false => {
-                match fs::copy(&path, &new_dst_dir) {
+                match fs::copy(&path, &new_dst_path) {
                     Ok(_) => {
-                        info!("Copying {} over to {}", path_display, new_dst_dir_display);
+                        info!("Copying {} over to {}", path.display(), new_dst_path.display());
                     },
 
                     Err(_) => {
-                        error!("Cannot copy {} over to {}. Skipping this file...", path_display, new_dst_dir_display);
+                        error!("Cannot copy {} over to {}. Skipping this file...", path.display(), new_dst_path.display());
                         continue;
                     },
                 };
 
                 let asset_type = AssetType::guess(&path);
                 res.push(Asset::new(
-                    match path.strip_prefix(input_dir) {
+                    match path.strip_prefix(&input_dir) {
                         Ok(res) => res,
                         Err(_) => {
-                            error!("Cannot strip prefix {} from {}. Skipping this file...", input_dir.display(), path_display);
+                            error!("Cannot strip prefix {} from {}. Skipping this file...", input_dir.display(), path.display());
                             continue;
                         },
                     }.to_path_buf(),
@@ -150,15 +145,15 @@ fn copy_assets(
 
                 match asset_type {
                     AssetType::Css => {
-                        info!("Recognizing {} as a JavaScript asset", path_display);
+                        info!("Recognizing {} as a JavaScript asset", path.display());
                     },
 
                     AssetType::Js => {
-                        info!("Recognizing {} as an CSS asset", path_display);
+                        info!("Recognizing {} as an CSS asset", path.display());
                     },
 
                     AssetType::Other => {
-                        warn!("Not sure what kind of asset {} is. This asset is copied into the output directory, but will not be included in the <head> elements of the generated HTML files", path_display);
+                        warn!("Not sure what kind of asset {} is. This asset is copied into the output directory, but will not be included in the <head> elements of the generated HTML files", path.display());
                     },
                 };
             },
@@ -197,28 +192,25 @@ fn convert_dir(
     assets: &Vec<Asset>,
     dist: usize
 ) -> Result<(), ()> {
-    let src_dir_display = src_dir.display();
-    let dst_dir_display = dst_dir.display();
-
-    match fs::create_dir_all(dst_dir.clone()) {
+    match fs::create_dir_all(&dst_dir) {
         Ok(_) => {
-            info!("Creating directory {}...", dst_dir_display);
+            info!("Creating directory {}...", dst_dir.display());
         },
 
         Err(_) => {
-            error!("Cannot create directory {}. Skipping this directory...", dst_dir_display);
+            error!("Cannot create directory {}. Skipping this directory...", dst_dir.display());
             return Err(());
         },
     };
 
-    let iter = match fs::read_dir(src_dir) {
+    let iter = match fs::read_dir(&src_dir) {
         Ok(res) => {
-            info!("Iterating over files in directory {}...", src_dir_display);
+            info!("Iterating over files in directory {}...", src_dir.display());
             res
         },
 
         Err(_) => {
-            error!("Cannot iterate over files in directory {}. Skipping this directory...", src_dir_display);
+            error!("Cannot iterate over files in directory {}. Skipping this directory...", src_dir.display());
             return Err(());
         },
     };
@@ -231,26 +223,24 @@ fn convert_dir(
                 continue;
             },
         }.path();
-        let path_display = path.display();
 
-        let mut new_dst_dir = dst_dir.join(match path.strip_prefix(src_dir) {
+        let mut new_dst_path = dst_dir.join(match path.strip_prefix(&src_dir) {
             Ok(res) => res,
             Err(_) => {
-                error!("Cannot strip prefix {} from {}. Skipping this file...", src_dir_display, path_display);
+                error!("Cannot strip prefix {} from {}. Skipping this file...", src_dir.display(), path.display());
                 continue;
             },
         });
-        let new_dst_dir_display = new_dst_dir.display();
 
         match path.is_dir() {
             true => {
-                info!("{} is a directory, going in...", path_display);
+                info!("{} is a directory, going in...", path.display());
 
-                match convert_dir(info, &path, &new_dst_dir, assets, dist + 1) {
+                match convert_dir(info, &path, &new_dst_path, assets, dist + 1) {
                     Ok(_) => (),
                     Err(_) => {
                         if !info.persist {
-                            error!("Failed to convert files in inner directory {}. Falling back...", path_display);
+                            error!("Failed to convert files in inner directory {}. Falling back...", path.display());
                             return Err(());
                         }
                     },
@@ -261,25 +251,25 @@ fn convert_dir(
                 let ext = match path.extension() {
                     Some(res) => res,
                     None => {
-                        error!("Cannot extract extension from path {}. Skipping this file...", path_display);
+                        error!("Cannot extract extension from path {}. Skipping this file...", path.display());
                         continue;
                     },
                 };
 
                 match ext == "md" {
                     true => {
-                        info!("{} is a markdown, converting to post", path_display);
+                        info!("{} is a markdown, converting to post", path.display());
 
-                        let input = match fs::File::open(path.clone()) {
+                        let input = match fs::File::open(&path) {
                             Ok(res) => res,
                             Err(_) => {
-                                error!("Cannot open file {}. Skipping this file...", path_display);
+                                error!("Cannot open file {}. Skipping this file...", path.display());
                                 continue;
                             },
                         };
                         let mut reader = BufReader::new(input);
 
-                        let mut html_path = new_dst_dir.clone();
+                        let mut html_path = new_dst_path.clone();
                         html_path.set_extension("html");
 
                         let output = match fs::OpenOptions::new()
@@ -289,7 +279,7 @@ fn convert_dir(
                             .open(html_path.clone()) {
                             Ok(res) => res,
                             Err(_) => {
-                                error!("Cannot open file {} for writing. Skipping this file...", new_dst_dir_display);
+                                error!("Cannot open file {} for writing. Skipping this file...", new_dst_path.display());
                                 continue;
                             },
                         };
@@ -312,12 +302,12 @@ fn convert_dir(
                     },
 
                     false => {
-                        info!("{} is a non-markdown file, copying over", path_display);
+                        info!("{} is a non-markdown file, copying over", path.display());
 
-                        match fs::copy(&path, &new_dst_dir) {
+                        match fs::copy(&path, &new_dst_path) {
                             Ok(_) => (),
                             Err(_) => {
-                                error!("Cannot copy {}. Skipping this file...", path_display);
+                                error!("Cannot copy {}. Skipping this file...", path.display());
                                 continue;
                             },
                         };

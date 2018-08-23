@@ -4,8 +4,9 @@
 
 *	[done] Move all writing code to `converter::Converter`
 *	[done] Move all getopts code to `program_options.rs`
-*	Capitalize log messages
-*	Remove all the `*_display`'s
+*	[done] Capitalize log messages
+*	[done] Remove all the `*_display`'s
+*	`lazy_static` for long bytes in `converter::Converter`
 
 ## sooner or later
 
@@ -15,3 +16,5 @@
 *	Correctly produce markdown
 
 ## long-term
+
+*	Theming
