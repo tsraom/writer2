@@ -8,7 +8,8 @@
  *  -   replace / don't replace existing files
  */
 
-extern crate getopts;
+extern crate clap;
+
 extern crate libc;
 
 #[macro_use]
@@ -19,6 +20,12 @@ extern crate newtype_derive;
 
 #[macro_use]
 extern crate custom_derive;
+
+#[macro_use]
+extern crate log;
+
+extern crate simplelog;
+use simplelog::*;
 
 #[allow(unused)]
 #[allow(non_upper_case_globals)]
@@ -41,129 +48,361 @@ mod asset;
 use asset::{ Asset, AssetType };
 
 mod program_options;
-use program_options::ProgramOptions;
+use program_options::{ ProgramOptions, ProgramOptionsErr };
 
-use getopts::Options;
 use std::env;
 use std::path::PathBuf;
 
 fn copy_assets(
+    info: &ProgramOptions,
     input_dir: &PathBuf,
     src_dir: &PathBuf,
     dst_dir: &PathBuf
-) -> Vec<Asset> {
-    fs::create_dir_all(dst_dir.clone());
+) -> Result<Vec<Asset>, ()> {
+    let src_dir_display = src_dir.display();
+    let dst_dir_display = dst_dir.display();
 
-    let iter = fs::read_dir(src_dir).unwrap();
+    match fs::create_dir_all(dst_dir.clone()) {
+        Ok(_) => {
+            info!("Creating directory {}...", dst_dir_display);
+        },
+
+        Err(_) => {
+            error!("Cannot create directory {}. Skipping this directory...", dst_dir_display);
+            return Err(());
+        },
+    };
+
+    let iter = match fs::read_dir(src_dir) {
+        Ok(res) => {
+            info!("Iterating over files in directory {}...", src_dir_display);
+            res
+        },
+
+        Err(_) => {
+            error!("Cannot iterate over files in directory {}. Skipping this directory...", src_dir_display);
+            return Err(());
+        },
+    };
+
     let mut res: Vec<Asset> = Vec::new();
 
     for entry in iter {
-        let mut path = entry.unwrap().path();
-        let new_dst_dir = dst_dir.join(path.strip_prefix(src_dir).unwrap());
+        let mut path = match entry {
+            Ok(res) => res,
+            Err(_) => {
+                error!("Cannot iterate over file. Skipping this file...");
+                continue;
+            },
+        }.path();
+        let path_display = path.display();
+
+        let new_dst_dir = dst_dir.join(match path.strip_prefix(src_dir) {
+            Ok(res) => res,
+            Err(_) => {
+                error!("Cannot strip prefix {} from {}. Skipping this file...", src_dir_display, path_display);
+                continue;
+            },
+        });
+        let new_dst_dir_display = new_dst_dir.display();
 
         match path.is_dir() {
             true => {
-                let mut vec = copy_assets(input_dir, &path, &new_dst_dir);
-                res.append(&mut vec);
+                info!("{} is a directory, going in...", path_display);
+                
+                match copy_assets(info, input_dir, &path, &new_dst_dir) {
+                    Ok(mut vec) => {
+                        res.append(&mut vec);
+                    },
+
+                    Err(_) => {
+                        if !info.persist {
+                            error!("Failed to copy assets in inner directory {}. Falling back...", path_display);
+                            return Err(());
+                        }
+                    },
+                };
             },
 
             false => {
-                fs::copy(&path, &new_dst_dir);
+                match fs::copy(&path, &new_dst_dir) {
+                    Ok(_) => {
+                        info!("Copying {} over to {}", path_display, new_dst_dir_display);
+                    },
+
+                    Err(_) => {
+                        error!("Cannot copy {} over to {}. Skipping this file...", path_display, new_dst_dir_display);
+                        continue;
+                    },
+                };
+
+                let asset_type = AssetType::guess(&path);
                 res.push(Asset::new(
-                    path.strip_prefix(input_dir).unwrap().to_path_buf(),
-                    AssetType::guess(&path)
+                    match path.strip_prefix(input_dir) {
+                        Ok(res) => res,
+                        Err(_) => {
+                            error!("Cannot strip prefix {} from {}. Skipping this file...", input_dir.display(), path_display);
+                            continue;
+                        },
+                    }.to_path_buf(),
+                    asset_type
                 ));
+
+                match asset_type {
+                    AssetType::Css => {
+                        info!("Recognizing {} as a JavaScript asset", path_display);
+                    },
+
+                    AssetType::Js => {
+                        info!("Recognizing {} as an CSS asset", path_display);
+                    },
+
+                    AssetType::Other => {
+                        warn!("Not sure what kind of asset {} is. This asset is copied into the output directory, but will not be included in the <head> elements of the generated HTML files", path_display);
+                    },
+                };
             },
         }
     }
 
-    res
+    Ok(res)
 }
 
 //  copy assets over to the output directory
 fn prepare_assets(
-    output_dir: &PathBuf,
+    info: &ProgramOptions,
     assets_dir: &PathBuf
-) -> Vec<Asset> {
-    let curr_dir = env::current_dir().unwrap();
-    let src_dir = curr_dir.join(assets_dir);
-    let dst_dir = output_dir.join(assets_dir);
+) -> Result<Vec<Asset>, ()> {
+    let curr_dir = match env::current_dir() {
+        Ok(res) => res,
+        Err(_) => {
+            error!("Cannot obtain current working directory");
+            return Err(());
+        },
+    };
 
-    copy_assets(&curr_dir, &src_dir, &dst_dir)
+    let src_dir = curr_dir.join(assets_dir);
+    let dst_dir = info.output_dir.join(assets_dir);
+
+    copy_assets(&info, &curr_dir, &src_dir, &dst_dir)
 }
 
 //  convert all markdowns in a directory and copy whatever else
 //  dist is the number of levels from the original output directory to output_dir
 //  precondition: input_dir.is_dir() must be true
-fn convert_dir(input_dir: &PathBuf, output_dir: &PathBuf, verbose: bool, assets: &Vec<Asset>, dist: usize) {
-    let iter = fs::read_dir(input_dir)
-        .expect(&format!("could not open directory \"{}\"", input_dir.display()));
+fn convert_dir(
+    info: &ProgramOptions,
+    src_dir: &PathBuf,
+    dst_dir: &PathBuf,
+    assets: &Vec<Asset>,
+    dist: usize
+) -> Result<(), ()> {
+    let src_dir_display = src_dir.display();
+    let dst_dir_display = dst_dir.display();
+
+    match fs::create_dir_all(dst_dir.clone()) {
+        Ok(_) => {
+            info!("Creating directory {}...", dst_dir_display);
+        },
+
+        Err(_) => {
+            error!("Cannot create directory {}. Skipping this directory...", dst_dir_display);
+            return Err(());
+        },
+    };
+
+    let iter = match fs::read_dir(src_dir) {
+        Ok(res) => {
+            info!("Iterating over files in directory {}...", src_dir_display);
+            res
+        },
+
+        Err(_) => {
+            error!("Cannot iterate over files in directory {}. Skipping this directory...", src_dir_display);
+            return Err(());
+        },
+    };
 
     for entry in iter {
-        let mut path = entry.expect("I/O error during iteration").path();
+        let mut path = match entry {
+            Ok(res) => res,
+            Err(_) => {
+                error!("Cannot iterate over file. Skipping this file..");
+                continue;
+            },
+        }.path();
+        let path_display = path.display();
+
+        let mut new_dst_dir = dst_dir.join(match path.strip_prefix(src_dir) {
+            Ok(res) => res,
+            Err(_) => {
+                error!("Cannot strip prefix {} from {}. Skipping this file...", src_dir_display, path_display);
+                continue;
+            },
+        });
+        let new_dst_dir_display = new_dst_dir.display();
+
         match path.is_dir() {
             true => {
-                if verbose {
-                    println!("directory \"{}\" is a path, going in...", path.display());
-                }
+                info!("{} is a directory, going in...", path_display);
 
-                convert_dir(
-                    &path,
-                    &output_dir.join(path.strip_prefix(input_dir).expect("error during prefix-stripping")),
-                    verbose,
-                    assets,
-                    dist + 1
-                );
+                match convert_dir(info, &path, &new_dst_dir, assets, dist + 1) {
+                    Ok(_) => (),
+                    Err(_) => {
+                        if !info.persist {
+                            error!("Failed to convert files in inner directory {}. Falling back...", path_display);
+                            return Err(());
+                        }
+                    },
+                };
             },
 
             false => {
-                let parent_dir = path.parent()
-                    .expect(&format!("directory \"{}\" does not have a parent", path.display()));
-                fs::create_dir_all(output_dir.join(parent_dir.strip_prefix(input_dir).expect("error during prefix-stripping")))
-                    .expect(&format!("could not create directory \"{}\"", path.display()));
+                let ext = match path.extension() {
+                    Some(res) => res,
+                    None => {
+                        error!("Cannot extract extension from path {}. Skipping this file...", path_display);
+                        continue;
+                    },
+                };
 
-                match path.extension() == Some(std::ffi::OsStr::new("md")) {
+                match ext == "md" {
                     true => {
-                        if verbose {
-                            println!("directory \"{}\" is a markdown, converting to post", path.display());
-                        }
+                        info!("{} is a markdown, converting to post", path_display);
 
-                        let input = fs::File::open(path.clone())
-                            .expect(&format!("could not open file \"{}\"", path.display()));
+                        let input = match fs::File::open(path.clone()) {
+                            Ok(res) => res,
+                            Err(_) => {
+                                error!("Cannot open file {}. Skipping this file...", path_display);
+                                continue;
+                            },
+                        };
                         let mut reader = BufReader::new(input);
 
-                        let mut html_path = output_dir.join(path.strip_prefix(input_dir).expect("error during prefix-stripping"));
+                        let mut html_path = new_dst_dir.clone();
                         html_path.set_extension("html");
-                        let output = fs::OpenOptions::new().write(true).truncate(true).create(true).open(html_path.clone())
-                            .expect(&format!("could not open file \"{}\"", html_path.display()));
+
+                        let output = match fs::OpenOptions::new()
+                            .write(true)
+                            .truncate(true)
+                            .create(true)
+                            .open(html_path.clone()) {
+                            Ok(res) => res,
+                            Err(_) => {
+                                error!("Cannot open file {} for writing. Skipping this file...", new_dst_dir_display);
+                                continue;
+                            },
+                        };
                         let mut writer = BufWriter::new(output);
 
                         let mut converter = Converter::new();
-                        converter.convert(&mut reader, &mut writer, assets, dist);
+                        match converter.convert(&mut reader, &mut writer, assets, dist) {
+                            Ok(_) => {
+                                info!("Markdown conversion successful.");
+                            },
+
+                            Err(_) => {
+                                error!("Markdown conversion failed.");
+
+                                if !info.persist {
+                                    return Err(());
+                                }
+                            },
+                        }
                     },
 
                     false => {
-                        if verbose {
-                            println!("directory \"{}\" is a non-markdown file, copying over", path.display());
-                        }
+                        info!("{} is a non-markdown file, copying over", path_display);
 
-                        fs::copy(&path, &output_dir.join(path.strip_prefix(input_dir).expect("error during prefix-stripping")))
-                            .expect(&format!("failed to copy \"{}\"", path.display()));
+                        match fs::copy(&path, &new_dst_dir) {
+                            Ok(_) => (),
+                            Err(_) => {
+                                error!("Cannot copy {}. Skipping this file...", path_display);
+                                continue;
+                            },
+                        };
                     },
                 }
             },
         }
-    }
+    };
+
+    Ok(())
+}
+
+fn convert(info: &ProgramOptions, assets: &Vec<Asset>) -> Result<(), ()> {
+    convert_dir(&info, &info.input_dir, &info.output_dir, assets, 0)
 }
 
 fn main() {
-    let info = ProgramOptions::parse_options()
-        .expect("bad program options");
+    let info = match ProgramOptions::parse_options() {
+        Ok(res) => res,
 
-    if info.verbose {
-        println!("the current working directory is \"{}\"", env::current_dir().unwrap().display());
-    }
+        Err(e) => {
+            match SimpleLogger::init(LevelFilter::Error, Config::default()) {
+                Ok(_) => (),
+                Err(_) => {
+                    println!("Pre-logging error: cannot initialize log. Terminating...");
+                    return;
+                },
+            };
 
-    let assets = prepare_assets(&info.output_dir, &PathBuf::from("assets"));
-    convert_dir(&info.input_dir, &info.output_dir, info.verbose, &assets, 0);
+            match e {
+                ProgramOptionsErr::MissingInputDirectory =>
+                    error!("Input directory was not specified. Terminating..."),
+
+                ProgramOptionsErr::BadVerbosity =>
+                    error!("Verbosity must be <= 3. Terminating..."),
+            };
+
+            return;
+        },
+    };
+
+    match SimpleLogger::init(
+        match info.verbosity {
+            1 => LevelFilter::Error,
+            2 => LevelFilter::Warn,
+            3 => LevelFilter::Info,
+            _ => LevelFilter::Error,
+        },
+        Config::default()
+    ) {
+        Ok(_) => (),
+        Err(_) => {
+            println!("Pre-logging error: cannot initialize log. Terminating...");
+            return;
+        },
+    };
+
+    let assets = match prepare_assets(&info, &PathBuf::from("assets")) {
+        Ok(res) => {
+            info!("Assets copied successfully.");
+            res
+        },
+
+        Err(_) => {
+            error!("Failed to copy assets from input directory to output directory.");
+
+            if !info.persist {
+                error!("The program is non-persisting. Terminating...");
+                return;
+            }
+
+            Vec::new()
+        },
+    };
+
+    match convert(&info, &assets) {
+        Ok(_) => {
+            info!("Files in input directory converted successfully.");
+        },
+
+        Err(_) => {
+            if !info.persist {
+                error!("The program is non-persisting. Terminating...");
+                return;
+            }
+        },
+    };
 }

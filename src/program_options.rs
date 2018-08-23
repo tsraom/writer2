@@ -1,54 +1,91 @@
-use getopts::Options;
-use std::env;
-use std::path::PathBuf;
+use clap::{ App, Arg };
 
-/// program options.
-pub struct ProgramOptions {
-    pub input_dir: PathBuf,
-    pub output_dir: PathBuf,
-    pub verbose: bool,
+use std::path::{ PathBuf };
+
+/// Errors during options parsing.
+pub enum ProgramOptionsErr {
+    /// The user did not specify an input directory.
+    MissingInputDirectory,
+
+    /// The user specified a verbosity > 3.
+    BadVerbosity,
 }
 
-fn print_usage(program: &str, opts: &Options) {
-    let brief = format!("usage: {} INPUT-DIR [options]", program);
-    print!("{}", opts.usage(&brief));
+/// Options passed to this program.
+pub struct ProgramOptions {
+    /// Path to the input directory. Files under this directory will be examined
+    /// and copied / parsed.
+    pub input_dir: PathBuf,
+
+    /// Path to the output directory. Files will be copied / generated and
+    /// written to this directory, following the same directory structure in the
+    /// input directory.
+    pub output_dir: PathBuf,
+
+    /// Verbosity: 0 = error, 1 = warn, 2 = info.
+    pub verbosity: usize,
+
+    /// Persistence. If `false`, the program will stop running once it fails
+    /// to convert / copy one file. If `true`, the program will attempt to
+    /// run over all remaining files anyways. Defaults to `true`.
+    pub persist: bool,
 }
 
 impl ProgramOptions {
-    pub fn parse_options() -> Result<Self, ()> {
-        let args: Vec<String> = env::args().collect();
-        let program = &args[0];
 
-        let mut opts = Options::new();
-        opts.optopt("o", "output-dir", "set output directory", "OUTPUT-DIR");
-        opts.optflag("h", "help", "print this help menu");
-        opts.optflag("v", "verbose", "be very wordy");
+    /// Parses the command-line arguments used to invoke this program.
+    /// Returns `Ok(Self)` if parsing succeeds and all options are valid.
+    /// Otherwise, returns `Err(())`.
+    pub fn parse_options() -> Result<Self, ProgramOptionsErr> {
+        let app = App::new("writer2")
+            .about("A static site generator for a certain interests")
+            .arg(Arg::with_name("input-dir")
+                 .value_name("INPUT-DIR")
+                 .help("sets the input directory")
+                 .required(true))
+            .arg(Arg::with_name("output-dir")
+                 .short("o")
+                 .long("output-dir")
+                 .value_name("OUTPUT-DIR")
+                 .help("sets the output directory")
+                 .takes_value(true))
+            .arg(Arg::with_name("help")
+                 .short("h")
+                 .long("help")
+                 .help("display a help message"))
+            .arg(Arg::with_name("verbosity")
+                 .short("v")
+                 .multiple(true)
+                 .help("sets verbosity level, up to 3"))
+            .arg(Arg::with_name("no-persist")
+                 .long("no-persist")
+                 .help("do not persist after error"));
 
-        let matches = opts.parse(&args[1..])
-            .unwrap_or_else(|f| panic!(f.to_string()));
+        let matches = app.get_matches();
 
-        if matches.opt_present("h") {
-            print_usage(program, &opts);
-        }
-
-        let input_dir = match matches.free.is_empty() {
-            true => {
-                print_usage(program, &opts);
-                return Err(());
-            },
-
-            false => PathBuf::from(matches.free[0].clone()),
+        let input_dir = match matches.value_of("input-dir") {
+            Some(s) => PathBuf::from(s),
+            None => {
+                return Err(ProgramOptionsErr::MissingInputDirectory);
+            }
         };
 
-        let output_dir = match matches.opt_str("o") {
+        let output_dir = match matches.value_of("output-dir") {
             Some(s) => PathBuf::from(s),
             None => input_dir.clone(),
         };
 
+        let verbosity = matches.occurrences_of("verbosity") as usize;
+        if verbosity > 3 {
+            return Err(ProgramOptionsErr::BadVerbosity);
+        }
+
         Ok(Self {
             input_dir: input_dir,
             output_dir: output_dir,
-            verbose: matches.opt_present("v"),
+            verbosity: verbosity,
+            persist: !matches.is_present("no-persist"),
         })
     }
+
 }

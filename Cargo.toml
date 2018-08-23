@@ -4,11 +4,13 @@ version = "0.1.0"
 authors = ["name <e@ma.il>"]
 
 [dependencies]
-getopts = "0.2"
+clap = "2.32.0"
 libc = "0.2"
 bitflags = "1.0"
 newtype_derive = "0.1.6"
 custom_derive = "0.1.7"
+log = "0.4.4"
+simplelog = "^0.5.0"
 
 [build-dependencies]
 cc = "1.0"

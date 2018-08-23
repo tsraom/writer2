@@ -5,6 +5,9 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
+    //  only rerun build script if the C code were changed
+    println!("rerun-if-changed=src/cmark/src");
+
     let dir = PathBuf::from("src/cmark/csrc");
     let files = vec![
         "cmark.c",
