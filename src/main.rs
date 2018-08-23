@@ -27,6 +27,9 @@ extern crate log;
 extern crate simplelog;
 use simplelog::*;
 
+#[macro_use]
+extern crate lazy_static;
+
 #[allow(unused)]
 #[allow(non_upper_case_globals)]
 #[allow(non_camel_case_types)]

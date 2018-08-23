@@ -6,6 +6,35 @@ use std::io::{ BufReader, BufWriter, Read, Write };
 
 use std::iter;
 
+lazy_static! {
+    static ref INDENT: String = String::from("    "); 
+
+    static ref HEADER_PRE_ASSETS: String = format!(
+        "<!DOCTYPE html>\n\
+<html>\n\
+{0}<head>\n\
+{0}{0}<meta charset=\"UTF-8\">\n\
+{0}{0}<title>Title</title>\n",
+        &*INDENT
+    );
+
+    static ref HEADER_POST_ASSETS: String = format!(
+        "{0}</head>\n\
+\n\
+{0}<body>\n\
+{0}{0}<div class=\"container u-full-width\">\n",
+        &*INDENT
+    );
+
+    static ref FOOTER: String = format!(
+        "{0}{0}</div>\n\
+{0}</body>\n\
+{0}<script>hljs.initHighlightingOnLoad();</script>\n\
+</html>",
+        &*INDENT
+    );
+}
+
 pub struct Converter {
     indent: usize,
     tightness: bool,
@@ -136,18 +165,11 @@ impl Converter {
     ) -> io::Result<()>
         where W: Write
     {
-        write!(writer, "<!DOCTYPE html>\n\
-<html>\n\
-{0}<head>\n\
-{0}{0}<meta charset=\"UTF-8\">\n\
-{0}{0}<title>Title</title>\n", Self::repeat_indent(1))?;
+        write!(writer, "{}", &*HEADER_PRE_ASSETS)?;
 
         self.write_assets(writer, assets, dist)?;
 
-        write!(writer, "{0}</head>\n\
-\n\
-{0}<body>\n\
-{0}{0}<div class=\"container u-full-width\">\n", Self::repeat_indent(1))?;
+        write!(writer, "{}", &*HEADER_POST_ASSETS)?;
 
         self.indent = 2;
 
@@ -195,16 +217,13 @@ impl Converter {
     ) -> io::Result<()>
         where W: Write
     {
-        write!(writer, "{0}{0}</div>\n\
-{0}</body>\n\
-{0}<script>hljs.initHighlightingOnLoad();</script>\n\
-</html>", Self::repeat_indent(1))?;
+        write!(writer, "{}", &*FOOTER)?;
 
         Ok(())
     }
 
     fn repeat_indent(n: usize) -> String {
-        iter::repeat("    ").take(n).collect::<String>()
+        iter::repeat((*INDENT).clone()).take(n).collect::<String>()
     }
 
     fn make_indent(&self) -> String {
