@@ -11,12 +11,12 @@ lazy_static! {
     static ref INDENT: String = String::from("    ");
 }
 
-pub struct NaiveConverter {
+pub struct SimpleConverter {
     indent: usize,
     tightness: bool,
 }
 
-impl NaiveConverter {
+impl SimpleConverter {
 
     fn repeat_indent(n: usize) -> String {
         iter::repeat((*INDENT).clone()).take(n).collect::<String>()
@@ -117,7 +117,7 @@ impl NaiveConverter {
         match info.is_empty() {
             true => write!(
                 writer,
-                "{}<pre><code>\n{}\n</code></pre>\n",
+                "{}<pre><code>{}</code></pre>\n",
                 self.make_indent(), lit
             ),
 
@@ -314,7 +314,7 @@ impl NaiveConverter {
 
 }
 
-impl Converter for NaiveConverter {
+impl Converter for SimpleConverter {
 
     type MoreData = (); 
 

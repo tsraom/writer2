@@ -29,6 +29,12 @@ pub struct ProgramOptions {
     /// to convert / copy one file. If `true`, the program will attempt to
     /// run over all remaining files anyways. Defaults to `true`.
     pub persist: bool,
+
+    /// Simple conversion: If `true`, the program will just do a simple
+    /// CommonMark-to-HTML conversion, without theming and special syntax and
+    /// such. If `false`, the program performs regular conversion. Defaults to
+    /// `false`.
+    pub simple: bool,
 }
 
 impl ProgramOptions {
@@ -59,7 +65,10 @@ impl ProgramOptions {
                  .help("sets verbosity level, up to 3"))
             .arg(Arg::with_name("no-persist")
                  .long("no-persist")
-                 .help("do not persist after error"));
+                 .help("do not persist after error"))
+            .arg(Arg::with_name("simple")
+                 .long("simple")
+                 .help("perform simple conversion"));
 
         let matches = app.get_matches();
 
@@ -85,6 +94,7 @@ impl ProgramOptions {
             output_dir: output_dir,
             verbosity: verbosity,
             persist: !matches.is_present("no-persist"),
+            simple: matches.is_present("simple"),
         })
     }
 

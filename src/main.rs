@@ -47,7 +47,7 @@ mod cmark;
 mod converters;
 use converters::Converter;
 use converters::basic::{ BasicConverter, BasicData };
-use converters::naive::NaiveConverter;
+use converters::simple::SimpleConverter;
 
 mod asset;
 use asset::{ Asset, AssetType };
@@ -290,8 +290,17 @@ fn convert_dir(
                         };
                         let mut writer = BufWriter::new(output);
 
-                        let mut converter = BasicConverter::new();
-                        match converter.convert(&mut reader, &mut writer, BasicData::new(assets, dist)) {
+                        match match info.simple {
+                            true => {
+                                let mut cvt = SimpleConverter::new();
+                                cvt.convert(&mut reader, &mut writer, ())
+                            },
+
+                            false => {
+                                let mut cvt = BasicConverter::new();
+                                cvt.convert(&mut reader, &mut writer, BasicData::new(assets, dist))
+                            },
+                        } {
                             Ok(_) => {
                                 info!("Markdown conversion successful.");
                             },
@@ -370,21 +379,30 @@ fn main() {
         },
     };
 
-    let assets = match prepare_assets(&info, &PathBuf::from("assets")) {
-        Ok(res) => {
-            info!("Assets copied successfully.");
-            res
+    let assets = match info.simple {
+        true => {
+            info!("Simple conversion, skipping assets...");
+            Vec::new()
         },
 
-        Err(_) => {
-            error!("Failed to copy assets from input directory to output directory.");
+        false => {
+            match prepare_assets(&info, &PathBuf::from("assets")) {
+                Ok(res) => {
+                    info!("Assets copied successfully.");
+                    res
+                },
 
-            if !info.persist {
-                error!("The program is non-persisting. Terminating...");
-                return;
+                Err(_) => {
+                    error!("Failed to copy assets from input directory to output directory.");
+
+                    if !info.persist {
+                        error!("The program is non-persisting. Terminating...");
+                        return;
+                    }
+
+                    Vec::new()
+                },
             }
-
-            Vec::new()
         },
     };
 

@@ -1,5 +1,5 @@
 pub mod basic;
-pub mod naive;
+pub mod simple;
 
 use std::io;
 use std::io::{ Read, Write };
