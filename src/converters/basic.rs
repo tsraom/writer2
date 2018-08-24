@@ -1,10 +1,14 @@
+use converters::Converter;
+
 use cmark::*;
 use asset::*;
 
 use std::io;
-use std::io::{ BufReader, BufWriter, Read, Write };
+use std::io::{ Read, Write };
 
 use std::iter;
+
+use std::marker::PhantomData;
 
 lazy_static! {
     static ref INDENT: String = String::from("    "); 
@@ -35,9 +39,24 @@ lazy_static! {
     );
 }
 
-pub struct Converter {
+pub struct BasicConverter<'a> {
     indent: usize,
     tightness: bool,
+    phantom: PhantomData<&'a ()>,
+}
+
+pub struct BasicData<'a> {
+    assets: &'a Vec<Asset>,
+    dist: usize,
+}
+
+impl<'a> BasicData<'a> {
+    pub fn new(assets: &'a Vec<Asset>, dist: usize) -> Self {
+        Self {
+            assets: assets,
+            dist: dist,
+        }
+    }
 }
 
 /*
@@ -48,23 +67,384 @@ pub struct Converter {
  *  LineBreak, Code and HtmlInline.
  */
 
-impl Converter {
-    pub fn new() -> Self {
+impl<'a> BasicConverter<'a> {
+
+    fn write_header<W: Write>(
+        &mut self,
+        writer: &mut W,
+        assets: &Vec<Asset>,
+        dist: usize
+    ) -> io::Result<()> {
+        write!(writer, "{}", &*HEADER_PRE_ASSETS)?;
+
+        self.write_assets(writer, assets, dist)?;
+
+        write!(writer, "{}", &*HEADER_POST_ASSETS)?;
+
+        self.indent = 2;
+
+        Ok(())
+    }
+
+    fn write_assets<W: Write>(
+        &mut self,
+        writer: &mut W,
+        assets: &Vec<Asset>,
+        dist: usize
+    ) -> io::Result<()> {
+        for asset in assets {
+            match asset.asset_type() {
+                &AssetType::Css => {
+                    write!(
+                        writer,
+                        "<link rel=\"stylesheet\" href=\"{}{}\" type=\"text/css\">\n",
+                        "../".repeat(dist),
+                        asset.path().display()
+                    )
+                },
+
+                &AssetType::Js => {
+                    write!(
+                        writer,
+                        "<script src=\"{}{}\" type=\"text/javascript\"></script>\n",
+                        "../".repeat(dist),
+                        asset.path().display()
+                    )
+                },
+
+                &AssetType::Other => Ok(()),
+            }?;
+        }
+
+        Ok(())
+    }
+
+    fn write_footer<W: Write>(
+        &mut self,
+        writer: &mut W,
+    ) -> io::Result<()> {
+        write!(writer, "{}", &*FOOTER)?;
+
+        Ok(())
+    }
+
+    fn repeat_indent(n: usize) -> String {
+        iter::repeat((*INDENT).clone()).take(n).collect::<String>()
+    }
+
+    fn make_indent(&self) -> String {
+        Self::repeat_indent(self.indent)
+    }
+
+    fn convert_blockquote<W: Write>(
+        &mut self,
+        event: &Event,
+        writer: &mut W
+    ) -> io::Result<()> {
+        match event {
+            &Event::Enter => {
+                write!(writer, "{}<blockquote>\n", self.make_indent())?;
+                self.indent += 1;
+            },
+
+            &Event::Exit => {
+                self.indent -= 1;
+                write!(writer, "{}</blockquote>\n", self.make_indent())?;
+            },
+        };
+
+        Ok(())
+    }
+
+    fn convert_list<W: Write>(
+        &mut self,
+        ty: &ListType,
+        delim: &DelimType,
+        start: &StartingNumber,
+        tightness: &Tightness,
+        event: &Event,
+        writer: &mut W
+    ) -> io::Result<()> {
+        self.tightness = (*tightness).into();
+
+        match event {
+            &Event::Enter => {
+                match ty {
+                    &ListType::Bullet => write!(writer, "{}<ul>\n", self.make_indent()),
+                    &ListType::Ordered => write!(writer, "{}<ol>\n", self.make_indent()),
+                }?;
+
+                self.indent += 1;
+            },
+
+            &Event::Exit => {
+                self.indent -= 1;
+
+                match ty {
+                    &ListType::Bullet => write!(writer, "{}</ul>\n", self.make_indent()),
+                    &ListType::Ordered => write!(writer, "{}</ol>\n", self.make_indent()),
+                }?;
+            },
+        };
+
+        Ok(())
+    }
+
+    fn convert_item<W: Write>(
+        &mut self,
+        event: &Event,
+        writer: &mut W
+    ) -> io::Result<()> {
+        match event {
+            &Event::Enter => {
+                match self.tightness {
+                    true => write!(writer, "{}<li>\n", self.make_indent()),
+                    false => write!(writer, "{}<li><p>\n", self.make_indent()),
+                }?;
+
+                self.indent += 1;
+            },
+
+            &Event::Exit => {
+                self.indent -= 1;
+                
+                match self.tightness {
+                    true => write!(writer, "{}</li>\n", self.make_indent()),
+                    false => write!(writer, "{}</p></li>\n", self.make_indent()),
+                }?;
+            },
+        };
+
+        Ok(())
+    }
+
+    fn convert_code_block<W: Write>(
+        &self,
+        info: &InfoString,
+        lit: &Literal,
+        writer: &mut W
+    ) -> io::Result<()> {
+        match info.is_empty() {
+            true => write!(
+                writer,
+                "{}<pre><code>\n{}\n</code></pre>\n",
+                self.make_indent(), lit
+            ),
+
+            false => write!(
+                writer,
+                "{}<pre><code class=\"{}\">\n{}\n</code></pre>\n",
+                self.make_indent(), info, lit
+            ),
+        }?;
+
+        Ok(())
+    }
+
+    fn convert_html_block<W: Write>(
+        &self,
+        lit: &Literal,
+        writer: &mut W
+    ) -> io::Result<()> {
+        write!(writer, "{}{}\n", self.make_indent(), lit)?;
+        Ok(())
+    }
+
+    fn convert_paragraph<W: Write>(
+        &mut self,
+        event: &Event,
+        writer: &mut W
+    ) -> io::Result<()> {
+        match event {
+            &Event::Enter => {
+                write!(writer, "{}<p>", self.make_indent())?;
+                self.indent += 1;
+            },
+
+            &Event::Exit => {
+                self.indent -= 1;
+                write!(writer, "</p>\n")?;
+            },
+        };
+
+        Ok(())
+    }
+
+    fn convert_heading<W: Write>(
+        &mut self,
+        lvl: &HeadingLevel,
+        event: &Event,
+        writer: &mut W
+    ) -> io::Result<()> {
+        match event {
+            &Event::Enter => {
+                match lvl {
+                    &HeadingLevel::One => write!(writer, "{}<h1>", self.make_indent()),
+                    &HeadingLevel::Two => write!(writer, "{}<h2>", self.make_indent()),
+                    &HeadingLevel::Three => write!(writer, "{}<h3>", self.make_indent()),
+                    &HeadingLevel::Four => write!(writer, "{}<h4>", self.make_indent()),
+                    &HeadingLevel::Five => write!(writer, "{}<h5>", self.make_indent()),
+                    &HeadingLevel::Six => write!(writer, "{}<h6>", self.make_indent()),
+                }?;
+
+                self.indent += 1;
+            },
+
+            &Event::Exit => {
+                self.indent -= 1;
+                
+                match lvl {
+                    &HeadingLevel::One => write!(writer, "</h1>\n"),
+                    &HeadingLevel::Two => write!(writer, "</h2>\n"),
+                    &HeadingLevel::Three => write!(writer, "</h3>\n"),
+                    &HeadingLevel::Four => write!(writer, "</h4>\n"),
+                    &HeadingLevel::Five => write!(writer, "</h5>\n"),
+                    &HeadingLevel::Six => write!(writer, "</h6>\n"),
+                }?;
+            },
+        };
+
+        Ok(())
+    }
+
+    fn convert_thematic_break<W: Write>(
+        &self,
+        writer: &mut W
+    ) -> io::Result<()> {
+        write!(writer, "{}<hr />\n", self.make_indent())?;
+        Ok(())
+    }
+
+    fn convert_text<W: Write>(
+        &self,
+        lit: &Literal,
+        writer: &mut W
+    ) -> io::Result<()> {
+        write!(writer, "{}", lit)?;
+        Ok(())
+    }
+
+    fn convert_soft_break<W: Write>(
+        &self,
+        writer: &mut W
+    ) -> io::Result<()> {
+        write!(writer, "\n")?;
+        Ok(())
+    }
+
+    fn convert_line_break<W: Write>(
+        &self,
+        writer: &mut W
+    ) -> io::Result<()> {
+        write!(writer, "<br />\n")?;
+        Ok(())
+    }
+
+    fn convert_code<W: Write>(
+        &self,
+        lit: &Literal,
+        writer: &mut W
+    ) -> io::Result<()> {
+        write!(writer, "<code>{}</code>", lit);
+        Ok(())
+    }
+
+    fn convert_html_inline<W: Write>(
+        &self,
+        lit: &Literal,
+        writer: &mut W
+    ) -> io::Result<()> {
+        write!(writer, "{}", lit);
+        Ok(())
+    }
+
+    fn convert_emph<W: Write>(
+        &self,
+        event: &Event,
+        writer: &mut W
+    ) -> io::Result<()> {
+        match event {
+            &Event::Enter => write!(writer, "<em>"),
+            &Event::Exit => write!(writer, "</em>"),
+        }?;
+
+        Ok(())
+    }
+
+    fn convert_strong<W: Write>(
+        &self,
+        event: &Event,
+        writer: &mut W
+    ) -> io::Result<()> {
+        match event {
+            &Event::Enter => write!(writer, "<strong>"),
+            &Event::Exit => write!(writer, "</strong>"),
+        }?;
+
+        Ok(())
+    }
+
+    fn convert_link<W: Write>(
+        &self,
+        url: &Url,
+        title: &Title,
+        event: &Event,
+        writer: &mut W
+    ) -> io::Result<()> {
+        match event {
+            &Event::Enter => match title.is_empty() {
+                true => write!(writer, "<a href=\"{}\">", url),
+                false => write!(writer, "<a href=\"{}\" title=\"{}\">", url, title),
+            },
+
+            &Event::Exit => write!(writer, "</a>"),
+        }?;
+
+        Ok(())
+    }
+
+    fn convert_image<W: Write>(
+        &self,
+        url: &Url,
+        title: &Title,
+        event: &Event,
+        writer: &mut W
+    ) -> io::Result<()> {
+        match event {
+            &Event::Enter => match title.is_empty() {
+                true => write!(writer, "<img src=\"{}\" alt=\"", url),
+                false => write!(writer, "<img src=\"{}\" title=\"{}\" alt=\"", url, title),
+            },
+
+            &Event::Exit => write!(writer, "\" />"),
+        }?;
+
+        Ok(())
+    }
+
+}
+
+impl<'a> Converter for BasicConverter<'a> {
+
+    type MoreData = BasicData<'a>;
+    
+    fn new() -> Self {
         Self {
             indent: 0,
             tightness: false,
+            phantom: PhantomData,
         }
     }
 
-    pub fn convert<R, W>(
+    fn convert<R: Read, W: Write>(
         &mut self,
-        reader: &mut BufReader<R>,
-        writer: &mut BufWriter<W>,
-        assets: &Vec<Asset>,
-        dist: usize
-    ) -> io::Result<()>
-        where R: Read, W: Write
-    {
+        reader: &mut R,
+        writer: &mut W,
+        data: Self::MoreData,
+    ) -> io::Result<()> {
+        let assets = data.assets;
+        let dist = data.dist;
+
         let mut read_buffer = String::new();
         reader.read_to_string(&mut read_buffer).unwrap();
 
@@ -157,396 +537,4 @@ impl Converter {
         Ok(())
     }
 
-    fn write_header<W>(
-        &mut self,
-        writer: &mut BufWriter<W>,
-        assets: &Vec<Asset>,
-        dist: usize
-    ) -> io::Result<()>
-        where W: Write
-    {
-        write!(writer, "{}", &*HEADER_PRE_ASSETS)?;
-
-        self.write_assets(writer, assets, dist)?;
-
-        write!(writer, "{}", &*HEADER_POST_ASSETS)?;
-
-        self.indent = 2;
-
-        Ok(())
-    }
-
-    fn write_assets<W>(
-        &mut self,
-        writer: &mut BufWriter<W>,
-        assets: &Vec<Asset>,
-        dist: usize
-    ) -> io::Result<()>
-        where W: Write
-    {
-        for asset in assets {
-            match asset.asset_type() {
-                &AssetType::Css => {
-                    write!(
-                        writer,
-                        "<link rel=\"stylesheet\" href=\"{}{}\" type=\"text/css\">\n",
-                        "../".repeat(dist),
-                        asset.path().display()
-                    )
-                },
-
-                &AssetType::Js => {
-                    write!(
-                        writer,
-                        "<script src=\"{}{}\" type=\"text/javascript\"></script>\n",
-                        "../".repeat(dist),
-                        asset.path().display()
-                    )
-                },
-
-                &AssetType::Other => Ok(()),
-            }?;
-        }
-
-        Ok(())
-    }
-
-    fn write_footer<W>(
-        &mut self,
-        writer: &mut BufWriter<W>,
-    ) -> io::Result<()>
-        where W: Write
-    {
-        write!(writer, "{}", &*FOOTER)?;
-
-        Ok(())
-    }
-
-    fn repeat_indent(n: usize) -> String {
-        iter::repeat((*INDENT).clone()).take(n).collect::<String>()
-    }
-
-    fn make_indent(&self) -> String {
-        Self::repeat_indent(self.indent)
-    }
-
-    fn convert_blockquote<W>(
-        &mut self,
-        event: &Event,
-        writer: &mut BufWriter<W>
-    ) -> io::Result<()>
-        where W: Write
-    {
-        match event {
-            &Event::Enter => {
-                write!(writer, "{}<blockquote>\n", self.make_indent())?;
-                self.indent += 1;
-            },
-
-            &Event::Exit => {
-                self.indent -= 1;
-                write!(writer, "{}</blockquote>\n", self.make_indent())?;
-            },
-        };
-
-        Ok(())
-    }
-
-    fn convert_list<W>(
-        &mut self,
-        ty: &ListType,
-        delim: &DelimType,
-        start: &StartingNumber,
-        tightness: &Tightness,
-        event: &Event,
-        writer: &mut BufWriter<W>
-    ) -> io::Result<()>
-        where W: Write
-    {
-        self.tightness = (*tightness).into();
-
-        match event {
-            &Event::Enter => {
-                match ty {
-                    &ListType::Bullet => write!(writer, "{}<ul>\n", self.make_indent()),
-                    &ListType::Ordered => write!(writer, "{}<ol>\n", self.make_indent()),
-                }?;
-
-                self.indent += 1;
-            },
-
-            &Event::Exit => {
-                self.indent -= 1;
-
-                match ty {
-                    &ListType::Bullet => write!(writer, "{}</ul>\n", self.make_indent()),
-                    &ListType::Ordered => write!(writer, "{}</ol>\n", self.make_indent()),
-                }?;
-            },
-        };
-
-        Ok(())
-    }
-
-    fn convert_item<W>(
-        &mut self,
-        event: &Event,
-        writer: &mut BufWriter<W>
-    ) -> io::Result<()>
-        where W: Write
-    {
-        match event {
-            &Event::Enter => {
-                match self.tightness {
-                    true => write!(writer, "{}<li>\n", self.make_indent()),
-                    false => write!(writer, "{}<li><p>\n", self.make_indent()),
-                }?;
-
-                self.indent += 1;
-            },
-
-            &Event::Exit => {
-                self.indent -= 1;
-                
-                match self.tightness {
-                    true => write!(writer, "{}</li>\n", self.make_indent()),
-                    false => write!(writer, "{}</p></li>\n", self.make_indent()),
-                }?;
-            },
-        };
-
-        Ok(())
-    }
-
-    fn convert_code_block<W>(
-        &self,
-        info: &InfoString,
-        lit: &Literal,
-        writer: &mut BufWriter<W>
-    ) -> io::Result<()>
-        where W: Write
-    {
-        match info.is_empty() {
-            true => write!(
-                writer,
-                "{}<pre><code>\n{}\n</code></pre>\n",
-                self.make_indent(), lit
-            ),
-
-            false => write!(
-                writer,
-                "{}<pre><code class=\"{}\">\n{}\n</code></pre>\n",
-                self.make_indent(), info, lit
-            ),
-        }?;
-
-        Ok(())
-    }
-
-    fn convert_html_block<W>(
-        &self,
-        lit: &Literal,
-        writer: &mut BufWriter<W>
-    ) -> io::Result<()>
-        where W: Write
-    {
-        write!(writer, "{}{}\n", self.make_indent(), lit)?;
-        Ok(())
-    }
-
-    fn convert_paragraph<W>(
-        &mut self,
-        event: &Event,
-        writer: &mut BufWriter<W>
-    ) -> io::Result<()>
-        where W: Write
-    {
-        match event {
-            &Event::Enter => {
-                write!(writer, "{}<p>", self.make_indent())?;
-                self.indent += 1;
-            },
-
-            &Event::Exit => {
-                self.indent -= 1;
-                write!(writer, "</p>\n")?;
-            },
-        };
-
-        Ok(())
-    }
-
-    fn convert_heading<W>(
-        &mut self,
-        lvl: &HeadingLevel,
-        event: &Event,
-        writer: &mut BufWriter<W>
-    ) -> io::Result<()>
-        where W: Write
-    {
-        match event {
-            &Event::Enter => {
-                match lvl {
-                    &HeadingLevel::One => write!(writer, "{}<h1>", self.make_indent()),
-                    &HeadingLevel::Two => write!(writer, "{}<h2>", self.make_indent()),
-                    &HeadingLevel::Three => write!(writer, "{}<h3>", self.make_indent()),
-                    &HeadingLevel::Four => write!(writer, "{}<h4>", self.make_indent()),
-                    &HeadingLevel::Five => write!(writer, "{}<h5>", self.make_indent()),
-                    &HeadingLevel::Six => write!(writer, "{}<h6>", self.make_indent()),
-                }?;
-
-                self.indent += 1;
-            },
-
-            &Event::Exit => {
-                self.indent -= 1;
-                
-                match lvl {
-                    &HeadingLevel::One => write!(writer, "</h1>\n"),
-                    &HeadingLevel::Two => write!(writer, "</h2>\n"),
-                    &HeadingLevel::Three => write!(writer, "</h3>\n"),
-                    &HeadingLevel::Four => write!(writer, "</h4>\n"),
-                    &HeadingLevel::Five => write!(writer, "</h5>\n"),
-                    &HeadingLevel::Six => write!(writer, "</h6>\n"),
-                }?;
-            },
-        };
-
-        Ok(())
-    }
-
-    fn convert_thematic_break<W>(
-        &self,
-        writer: &mut BufWriter<W>
-    ) -> io::Result<()>
-        where W: Write
-    {
-        write!(writer, "{}<hr />\n", self.make_indent())?;
-        Ok(())
-    }
-
-    fn convert_text<W>(
-        &self,
-        lit: &Literal,
-        writer: &mut BufWriter<W>
-    ) -> io::Result<()>
-        where W: Write
-    {
-        write!(writer, "{}", lit)?;
-        Ok(())
-    }
-
-    fn convert_soft_break<W>(
-        &self,
-        writer: &mut BufWriter<W>
-    ) -> io::Result<()>
-        where W: Write
-    {
-        write!(writer, "\n")?;
-        Ok(())
-    }
-
-    fn convert_line_break<W>(
-        &self,
-        writer: &mut BufWriter<W>
-    ) -> io::Result<()>
-        where W: Write
-    {
-        write!(writer, "<br />\n")?;
-        Ok(())
-    }
-
-    fn convert_code<W>(
-        &self,
-        lit: &Literal,
-        writer: &mut BufWriter<W>
-    ) -> io::Result<()>
-        where W: Write
-    {
-        write!(writer, "<code>{}</code>", lit);
-        Ok(())
-    }
-
-    fn convert_html_inline<W>(
-        &self,
-        lit: &Literal,
-        writer: &mut BufWriter<W>
-    ) -> io::Result<()>
-        where W: Write
-    {
-        write!(writer, "{}", lit);
-        Ok(())
-    }
-
-    fn convert_emph<W>(
-        &self,
-        event: &Event,
-        writer: &mut BufWriter<W>
-    ) -> io::Result<()>
-        where W: Write
-    {
-        match event {
-            &Event::Enter => write!(writer, "<em>"),
-            &Event::Exit => write!(writer, "</em>"),
-        }?;
-
-        Ok(())
-    }
-
-    fn convert_strong<W>(
-        &self,
-        event: &Event,
-        writer: &mut BufWriter<W>
-    ) -> io::Result<()>
-        where W: Write
-    {
-        match event {
-            &Event::Enter => write!(writer, "<strong>"),
-            &Event::Exit => write!(writer, "</strong>"),
-        }?;
-
-        Ok(())
-    }
-
-    fn convert_link<W>(
-        &self,
-        url: &Url,
-        title: &Title,
-        event: &Event,
-        writer: &mut BufWriter<W>
-    ) -> io::Result<()>
-        where W: Write
-    {
-        match event {
-            &Event::Enter => match title.is_empty() {
-                true => write!(writer, "<a href=\"{}\">", url),
-                false => write!(writer, "<a href=\"{}\" title=\"{}\">", url, title),
-            },
-
-            &Event::Exit => write!(writer, "</a>"),
-        }?;
-
-        Ok(())
-    }
-
-    fn convert_image<W>(
-        &self,
-        url: &Url,
-        title: &Title,
-        event: &Event,
-        writer: &mut BufWriter<W>
-    ) -> io::Result<()>
-        where W: Write
-    {
-        match event {
-            &Event::Enter => match title.is_empty() {
-                true => write!(writer, "<img src=\"{}\" alt=\"", url),
-                false => write!(writer, "<img src=\"{}\" title=\"{}\" alt=\"", url, title),
-            },
-
-            &Event::Exit => write!(writer, "\" />"),
-        }?;
-
-        Ok(())
-    }
 }

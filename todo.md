@@ -6,7 +6,8 @@
 *	[done] Move all getopts code to `program_options.rs`
 *	[done] Capitalize log messages
 *	[done] Remove all the `*_display`'s
-*	`lazy_static` for long bytes in `converter::Converter`
+*	[done] `lazy_static` for long bytes in `converter::Converter`
+*	Add a "naive" converter that just does markdown conversion
 
 ## sooner or later
 

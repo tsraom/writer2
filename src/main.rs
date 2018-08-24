@@ -44,8 +44,10 @@ use std::io::{ BufReader, BufWriter };
 
 mod cmark;
 
-mod converter;
-use converter::Converter;
+mod converters;
+use converters::Converter;
+use converters::basic::{ BasicConverter, BasicData };
+use converters::naive::NaiveConverter;
 
 mod asset;
 use asset::{ Asset, AssetType };
@@ -288,8 +290,8 @@ fn convert_dir(
                         };
                         let mut writer = BufWriter::new(output);
 
-                        let mut converter = Converter::new();
-                        match converter.convert(&mut reader, &mut writer, assets, dist) {
+                        let mut converter = BasicConverter::new();
+                        match converter.convert(&mut reader, &mut writer, BasicData::new(assets, dist)) {
                             Ok(_) => {
                                 info!("Markdown conversion successful.");
                             },
