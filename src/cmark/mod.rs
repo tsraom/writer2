@@ -135,6 +135,28 @@ custom_derive! {
     pub struct InfoString(String);
 }
 
+impl InfoString {
+    pub fn strip(&self) -> String {
+        let mut start: usize = 0;
+        let mut end: usize = (*self.0).len();
+        let mut start_done = false;
+
+        for (idx, ch) in self.0.char_indices() {
+            if (!start_done) && ch != ' ' {
+                start_done = true;
+                start = idx;
+            }
+
+            if start_done && ch == ' ' {
+                end = idx;
+                break;
+            }
+        }
+
+        String::from((*self.0).get(start..end).unwrap())
+    }
+}
+
 custom_derive! {
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
     #[derive(NewtypeFrom, NewtypeDeref, NewtypeDerefMut, NewtypeDisplay)]

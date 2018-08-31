@@ -7,8 +7,19 @@ use std::io::{ Read, Write };
 
 use std::iter;
 
+use std::collections::HashMap;
+
 lazy_static! {
     static ref INDENT: String = String::from("    ");
+
+    static ref CHAR_MAP: HashMap<char, String> = {
+        let mut result: HashMap<char, String> = HashMap::new();
+        result.insert('\"', String::from("&quot;"));
+        result.insert('&', String::from("&amp;"));
+        result.insert('<', String::from("&lt;"));
+        result.insert('>', String::from("&gt;"));
+        result
+    };
 }
 
 pub struct SimpleConverter {
@@ -24,6 +35,21 @@ impl SimpleConverter {
 
     fn make_indent(&self) -> String {
         Self::repeat_indent(self.indent)
+    }
+
+    fn write_literal<W: Write>(
+        &self,
+        lit: &Literal,
+        writer: &mut W
+    ) -> io::Result<()> {
+        for ch in lit.chars() {
+            match CHAR_MAP.get(&ch) {
+                Some(ref s) => write!(writer, "{}", s),
+                None => write!(writer, "{}", ch),
+            }?;
+        }
+
+        Ok(())
     }
 
     fn convert_blockquote<W: Write>(
@@ -115,18 +141,23 @@ impl SimpleConverter {
         writer: &mut W
     ) -> io::Result<()> {
         match info.is_empty() {
-            true => write!(
-                writer,
-                "{}<pre><code>{}</code></pre>\n",
-                self.make_indent(), lit
-            ),
+            true => {
+                write!(writer, "{}<pre><code>", self.make_indent())?;
+                self.write_literal(lit, writer)?;
+                write!(writer, "</code></pre>\n")?;
+            },
 
-            false => write!(
-                writer,
-                "{}<pre><code class=\"language-{}\">\n{}\n</code></pre>\n",
-                self.make_indent(), info, lit
-            ),
-        }?;
+            false => {
+                write!(
+                    writer,
+                    "{}<pre><code class=\"language-{}\">",
+                    self.make_indent(),
+                    info.strip()
+                )?;
+                self.write_literal(lit, writer)?;
+                write!(writer, "</code></pre>\n")?;
+            },
+        }
 
         Ok(())
     }
@@ -136,8 +167,8 @@ impl SimpleConverter {
         lit: &Literal,
         writer: &mut W
     ) -> io::Result<()> {
-        write!(writer, "{}{}\n", self.make_indent(), lit)?;
-        Ok(())
+        write!(writer, "{}", self.make_indent())?;
+        self.write_literal(lit, writer)
     }
 
     fn convert_paragraph<W: Write>(
@@ -210,8 +241,7 @@ impl SimpleConverter {
         lit: &Literal,
         writer: &mut W
     ) -> io::Result<()> {
-        write!(writer, "{}", lit)?;
-        Ok(())
+        self.write_literal(lit, writer)
     }
 
     fn convert_soft_break<W: Write>(
@@ -235,8 +265,9 @@ impl SimpleConverter {
         lit: &Literal,
         writer: &mut W
     ) -> io::Result<()> {
-        write!(writer, "<code>{}</code>", lit);
-        Ok(())
+        write!(writer, "<code>")?;
+        self.write_literal(lit, writer)?;
+        write!(writer, "</code>")
     }
 
     fn convert_html_inline<W: Write>(
@@ -244,8 +275,7 @@ impl SimpleConverter {
         lit: &Literal,
         writer: &mut W
     ) -> io::Result<()> {
-        write!(writer, "{}", lit);
-        Ok(())
+        self.write_literal(lit, writer)
     }
 
     fn convert_emph<W: Write>(

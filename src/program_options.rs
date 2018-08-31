@@ -35,6 +35,14 @@ pub struct ProgramOptions {
     /// such. If `false`, the program performs regular conversion. Defaults to
     /// `false`.
     pub simple: bool,
+
+    /// Customized indent string. Defaults to `None`.
+    pub custom_indent: Option<String>,
+
+    /// Single file: If `true`, the input path will be taken to be a path to
+    /// one single file, rather than a directory. If `false`, the input path
+    /// will be taken to be a directory. Defaults to `false`.
+    pub single_file: bool,
 }
 
 impl ProgramOptions {
@@ -68,7 +76,13 @@ impl ProgramOptions {
                  .help("do not persist after error"))
             .arg(Arg::with_name("simple")
                  .long("simple")
-                 .help("perform simple conversion"));
+                 .help("perform simple conversion"))
+            .arg(Arg::with_name("custom-indent")
+                 .long("custom-indent")
+                 .help("custom indent string, must be enclosed with double quotes"))
+            .arg(Arg::with_name("single-file")
+                 .long("single-file")
+                 .help("convert just one file"));
 
         let matches = app.get_matches();
 
@@ -95,6 +109,11 @@ impl ProgramOptions {
             verbosity: verbosity,
             persist: !matches.is_present("no-persist"),
             simple: matches.is_present("simple"),
+            custom_indent: matches.value_of("custom-indent")
+                .filter(|s| s.starts_with('\"'))
+                .filter(|s| s.ends_with('\"'))
+                .map(str::to_owned),
+            single_file: matches.is_present("single-file"),
         })
     }
 

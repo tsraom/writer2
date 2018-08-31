@@ -187,6 +187,93 @@ fn prepare_assets(
     copy_assets(&info, &curr_dir, &src_dir, &dst_dir)
 }
 
+fn convert_file(
+    info: &ProgramOptions,
+    src_path: &PathBuf,
+    dst_path: &PathBuf,
+    assets: &Vec<Asset>,
+    dist: usize,
+) -> Result<(), ()> {
+    let extension = match src_path.extension() {
+        Some(res) => res,
+        None => {
+            error!("Cannot extract extension from path {}. Skipping this file...", src_path.display());
+            return Err(());
+        },
+    };
+
+    match extension == "md" {
+        true => {
+            info!("{} is a markdown, converting to post", src_path.display());
+
+            let input = match fs::File::open(&src_path) {
+                Ok(res) => res,
+                Err(_) => {
+                    error!("Cannot open file {}. Skipping this file...", src_path.display());
+                    return Err(());
+                },
+            };
+            let mut reader = BufReader::new(input);
+
+            let mut html_path = dst_path.clone();
+            html_path.set_extension("html");
+
+            let output = match fs::OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .create(true)
+                .open(html_path.clone()) {
+                    Ok(res) => res,
+                    Err(_) => {
+                        error!("Cannot open file {} for writing. Skipping this file...", dst_path.display());
+                        return Err(());
+                    },
+                };
+            let mut writer = BufWriter::new(output);
+
+            match match info.simple {
+                true => {
+                    let mut cvt = SimpleConverter::new();
+                    cvt.convert(&mut reader, &mut writer, ())
+                },
+
+                false => {
+                    let mut cvt = BasicConverter::new();
+                    cvt.convert(&mut reader, &mut writer, BasicData::new(assets, dist))
+                },
+            } {
+                Ok(_) => {
+                    info!("CommonMark conversion successful.");
+                },
+
+                Err(_) => {
+                    error!("CommonMark conversion failed.");
+
+                    if !info.persist {
+                        return Err(());
+                    }
+                },
+            }
+        },
+
+        false => {
+            info!("{} is a non-markdown file, copying over", src_path.display());
+
+            match fs::copy(&src_path, &dst_path) {
+                Ok(_) => {
+                    info!("Copied successfully.");
+                },
+                Err(_) => {
+                    error!("Failed to copy.");
+                    return Err(());
+                },
+            };
+        },
+    }
+
+    Ok(())
+}
+
 //  convert all markdowns in a directory and copy whatever else
 //  dist is the number of levels from the original output directory to output_dir
 //  precondition: input_dir.is_dir() must be true
@@ -253,80 +340,17 @@ fn convert_dir(
             },
 
             false => {
-                let ext = match path.extension() {
-                    Some(res) => res,
-                    None => {
-                        error!("Cannot extract extension from path {}. Skipping this file...", path.display());
-                        continue;
-                    },
-                };
+                info!("{} is a file.", path.display());
 
-                match ext == "md" {
-                    true => {
-                        info!("{} is a markdown, converting to post", path.display());
-
-                        let input = match fs::File::open(&path) {
-                            Ok(res) => res,
-                            Err(_) => {
-                                error!("Cannot open file {}. Skipping this file...", path.display());
-                                continue;
-                            },
-                        };
-                        let mut reader = BufReader::new(input);
-
-                        let mut html_path = new_dst_path.clone();
-                        html_path.set_extension("html");
-
-                        let output = match fs::OpenOptions::new()
-                            .write(true)
-                            .truncate(true)
-                            .create(true)
-                            .open(html_path.clone()) {
-                            Ok(res) => res,
-                            Err(_) => {
-                                error!("Cannot open file {} for writing. Skipping this file...", new_dst_path.display());
-                                continue;
-                            },
-                        };
-                        let mut writer = BufWriter::new(output);
-
-                        match match info.simple {
-                            true => {
-                                let mut cvt = SimpleConverter::new();
-                                cvt.convert(&mut reader, &mut writer, ())
-                            },
-
-                            false => {
-                                let mut cvt = BasicConverter::new();
-                                cvt.convert(&mut reader, &mut writer, BasicData::new(assets, dist))
-                            },
-                        } {
-                            Ok(_) => {
-                                info!("Markdown conversion successful.");
-                            },
-
-                            Err(_) => {
-                                error!("Markdown conversion failed.");
-
-                                if !info.persist {
-                                    return Err(());
-                                }
-                            },
+                match convert_file(info, &path, &new_dst_path, assets, dist) {
+                    Ok(_) => (),
+                    Err(_) => {
+                        if !info.persist {
+                            error!("Failed to convert file {}. Falling back...", path.display());
+                            return Err(());
                         }
                     },
-
-                    false => {
-                        info!("{} is a non-markdown file, copying over", path.display());
-
-                        match fs::copy(&path, &new_dst_path) {
-                            Ok(_) => (),
-                            Err(_) => {
-                                error!("Cannot copy {}. Skipping this file...", path.display());
-                                continue;
-                            },
-                        };
-                    },
-                }
+                };
             },
         }
     };
@@ -335,7 +359,21 @@ fn convert_dir(
 }
 
 fn convert(info: &ProgramOptions, assets: &Vec<Asset>) -> Result<(), ()> {
-    convert_dir(&info, &info.input_dir, &info.output_dir, assets, 0)
+    match info.single_file {
+        true => match info.input_dir.file_name() {
+            Some(filename) => {
+                let dst_dir = info.output_dir.join(filename);
+                convert_file(&info, &info.input_dir, &dst_dir, assets, 0)
+            },
+
+            None => {
+                error!("Cannot extract filename from path {}.", info.input_dir.display());
+                Err(())
+            },
+        },
+
+        false => convert_dir(&info, &info.input_dir, &info.output_dir, assets, 0),
+    }
 }
 
 fn main() {
@@ -408,7 +446,7 @@ fn main() {
 
     match convert(&info, &assets) {
         Ok(_) => {
-            info!("Files in input directory converted successfully.");
+            info!("File(s) in input directory converted successfully.");
         },
 
         Err(_) => {
